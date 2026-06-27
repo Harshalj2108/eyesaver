@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use windows::Win32::Devices::Display::{
     DestroyPhysicalMonitors, GetNumberOfPhysicalMonitorsFromHMONITOR,
-    GetPhysicalMonitorsFromHMONITOR, SetMonitorBrightness, PHYSICAL_MONITOR,
+    GetPhysicalMonitorsFromHMONITOR, SetMonitorBrightness, GetMonitorBrightness, PHYSICAL_MONITOR,
 };
 use windows::Win32::Foundation::POINT;
 use windows::Win32::Graphics::Gdi::{
@@ -12,10 +12,10 @@ use windows::Win32::Graphics::Gdi::{
     BITMAPINFOHEADER, BI_RGB, COLORONCOLOR, DIB_RGB_COLORS, MONITOR_DEFAULTTOPRIMARY, RGBQUAD,
     SRCCOPY,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetDesktopWindow, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
 
 use brightness_sys::Brightness;
-use futures::TryStreamExt;
+use futures::{TryStreamExt, StreamExt};
 
 fn get_primary_monitor_average_luminance() -> Option<f32> {
     unsafe {
@@ -147,15 +147,56 @@ fn set_monitor_brightness_ddcci(target_brightness: u32) {
     }
 }
 
+async fn get_initial_brightness() -> f32 {
+    // 1. Try WMI (Laptops)
+    let mut devices = brightness_sys::brightness_devices();
+    if let Some(Ok(dev)) = devices.next().await {
+        if let Ok(val) = dev.get().await {
+            return val as f32;
+        }
+    }
+    
+    // 2. Try DDC/CI (External monitors)
+    unsafe {
+        let pt = POINT { x: 0, y: 0 };
+        let h_monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+        
+        let mut num_physical: u32 = 0;
+        if GetNumberOfPhysicalMonitorsFromHMONITOR(h_monitor, &mut num_physical).is_ok() && num_physical > 0 {
+            let mut physical_monitors = vec![PHYSICAL_MONITOR::default(); num_physical as usize];
+            if GetPhysicalMonitorsFromHMONITOR(h_monitor, &mut physical_monitors).is_ok() {
+                let pm = &physical_monitors[0];
+                let mut min_b: u32 = 0;
+                let mut cur_b: u32 = 0;
+                let mut max_b: u32 = 0;
+                let _ = GetMonitorBrightness(pm.hPhysicalMonitor, &mut min_b, &mut cur_b, &mut max_b);
+                let _ = DestroyPhysicalMonitors(&physical_monitors);
+                if cur_b > 0 {
+                    return cur_b as f32;
+                }
+            }
+        }
+    }
+    
+    // 3. Fallback
+    50.0
+}
+
 #[tokio::main]
 async fn main() {
     println!("Starting Eyesaver...");
     println!("Press Ctrl+C to exit.");
     
-    // Smoothing factor: higher = smoother but slower transitions (e.g. 0.95)
-    let smoothing_factor = 0.95;
-    let mut current_brightness: f32 = 50.0; // Assume starting at 50%
-    let mut last_set_brightness: u32 = 0;
+    // Smoothing factor: lower = faster transitions (0.65 means it fades quickly over ~150ms)
+    // Dragging this out too long makes the discrete hardware steps (1-100) visible to the eye.
+    let smoothing_factor = 0.65;
+    
+    // Initialize current brightness to the monitor's actual brightness
+    let mut current_brightness: f32 = get_initial_brightness().await;
+    let mut last_set_brightness: u32 = current_brightness.round() as u32;
+    let mut active_target_b: f32 = current_brightness;
+    
+    println!("Initial brightness detected as: {}%", last_set_brightness);
     
     loop {
         let start = std::time::Instant::now();
@@ -170,17 +211,21 @@ async fn main() {
             let bright2: f32 = 60.0;
             
             // Linear interpolation (map range)
-            let mut target_b = bright1 + (lum - lum1) * (bright2 - bright1) / (lum2 - lum1);
+            let mut calculated_target_b = bright1 + (lum - lum1) * (bright2 - bright1) / (lum2 - lum1);
+            calculated_target_b = calculated_target_b.clamp(0.0, 100.0);
             
-            // Clamp to absolute bounds to ensure valid brightness values
-            target_b = target_b.clamp(0.0, 100.0);
+            // Hysteresis (Deadzone): Only change the active target if the screen changed significantly.
+            // This prevents tiny fluctuations (like a blinking cursor or small video) from causing flickering.
+            if (calculated_target_b - active_target_b).abs() > 2.0 {
+                active_target_b = calculated_target_b;
+            }
             
             // Apply smoothing
-            current_brightness = (current_brightness * smoothing_factor) + (target_b * (1.0 - smoothing_factor));
+            current_brightness = (current_brightness * smoothing_factor) + (active_target_b * (1.0 - smoothing_factor));
             let final_b = current_brightness.round() as u32;
             
             if final_b != last_set_brightness {
-                println!("Luminance: {:.2} -> Target Brightness: {}, Final Smoothed: {}", lum, target_b.round(), final_b);
+                println!("Luminance: {:.2} -> Target: {}, Smoothed: {}", lum, active_target_b.round(), final_b);
                 
                 // Set brightness using both APIs to cover external monitors + laptop displays
                 set_monitor_brightness_ddcci(final_b);
@@ -189,14 +234,15 @@ async fn main() {
                 last_set_brightness = final_b;
             }
             
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            // Run at ~20 FPS for much smoother and less stuttery transitions
+            tokio::time::sleep(Duration::from_millis(50)).await;
         } else {
             let mut error_printed = false;
             if !error_printed {
                 println!("Failed to get monitor luminance, retrying... (Ensure you are not running this in a headless terminal)");
                 error_printed = true;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 }
