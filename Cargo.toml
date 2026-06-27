@@ -5,4 +5,7 @@ edition = "2024"
 
 [dependencies]
 xcap = "0.3"
-windows = { version = "0.58", features = ["Win32_Devices_Display", "Win32_Graphics_Gdi", "Win32_Foundation"] }
+windows = { version = "0.58", features = ["Win32_Devices_Display", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+brightness_sys = { package = "brightness", version = "0.5" }
+futures = "0.3"
+tokio = { version = "1.0", features = ["full"] }
