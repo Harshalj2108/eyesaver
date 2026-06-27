@@ -37,8 +37,8 @@ fn get_primary_monitor_average_luminance() -> Option<f32> {
         }
 
         // We scale down the screen to 100x100 for extremely fast processing
-        let target_w = 100;
-        let target_h = 100;
+        let target_w = 50;
+        let target_h = 50;
 
         let hdc_mem = CreateCompatibleDC(hdc_screen);
         let hbm_mem = CreateCompatibleBitmap(hdc_screen, target_w, target_h);
@@ -104,18 +104,18 @@ fn get_primary_monitor_average_luminance() -> Option<f32> {
             return None;
         }
 
-        let mut total_lum: f64 = 0.0;
+        let mut total_lum: u64 = 0;
         for &pixel in &pixels {
-            // format is BGRA for 32-bit DIB
-            let b = (pixel & 0xFF) as f64;
-            let g = ((pixel >> 8) & 0xFF) as f64;
-            let r = ((pixel >> 16) & 0xFF) as f64;
+            let b = (pixel & 0xFF) as u64;
+            let g = ((pixel >> 8) & 0xFF) as u64;
+            let r = ((pixel >> 16) & 0xFF) as u64;
             
-            let lum = 0.299 * r + 0.587 * g + 0.114 * b;
+            // integer math for speed: 0.299 * 1000 = 299
+            let lum = r * 299 + g * 587 + b * 114;
             total_lum += lum;
         }
 
-        let avg_lum = total_lum / (num_pixels as f64);
+        let avg_lum = (total_lum as f64) / (num_pixels as f64) / 1000.0;
         Some((avg_lum / 255.0) as f32)
     }
 }
@@ -155,6 +155,7 @@ async fn main() {
     // Smoothing factor: higher = smoother but slower transitions (e.g. 0.95)
     let smoothing_factor = 0.95;
     let mut current_brightness: f32 = 50.0; // Assume starting at 50%
+    let mut last_set_brightness: u32 = 0;
     
     loop {
         let start = std::time::Instant::now();
@@ -178,16 +179,17 @@ async fn main() {
             current_brightness = (current_brightness * smoothing_factor) + (target_b * (1.0 - smoothing_factor));
             let final_b = current_brightness.round() as u32;
             
-            println!("Luminance: {:.2} -> Target Brightness: {}, Final Smoothed: {}", lum, target_b.round(), final_b);
-            
-            // Set brightness using both APIs to cover external monitors + laptop displays
-            set_monitor_brightness_ddcci(final_b);
-            set_monitor_brightness_wmi(final_b).await;
-            
-            let elapsed = start.elapsed();
-            if elapsed < Duration::from_millis(100) {
-                tokio::time::sleep(Duration::from_millis(100) - elapsed).await;
+            if final_b != last_set_brightness {
+                println!("Luminance: {:.2} -> Target Brightness: {}, Final Smoothed: {}", lum, target_b.round(), final_b);
+                
+                // Set brightness using both APIs to cover external monitors + laptop displays
+                set_monitor_brightness_ddcci(final_b);
+                set_monitor_brightness_wmi(final_b).await;
+                
+                last_set_brightness = final_b;
             }
+            
+            tokio::time::sleep(Duration::from_millis(150)).await;
         } else {
             let mut error_printed = false;
             if !error_printed {
