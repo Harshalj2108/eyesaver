@@ -152,8 +152,8 @@ async fn main() {
     println!("Starting Eyesaver...");
     println!("Press Ctrl+C to exit.");
     
-    // Smoothing factor: higher = smoother but slower transitions
-    let smoothing_factor = 0.8;
+    // Smoothing factor: higher = smoother but slower transitions (e.g. 0.95)
+    let smoothing_factor = 0.95;
     let mut current_brightness: f32 = 50.0; // Assume starting at 50%
     
     loop {
