@@ -198,7 +198,22 @@ async fn main() {
     
     println!("Initial brightness detected as: {}%", last_set_brightness);
     
+    let mut baseline_offset: f32 = 0.0;
+    let mut tick_counter: u32 = 0;
+    
     loop {
+        tick_counter += 1;
+        // Check for manual overrides every 500ms (10 ticks)
+        if tick_counter % 10 == 0 {
+            let actual = get_initial_brightness().await;
+            if (actual as i32 - last_set_brightness as i32).abs() > 2 {
+                println!("Manual brightness override detected ({} -> {})! Recalibrating baseline...", last_set_brightness, actual);
+                baseline_offset += actual - current_brightness;
+                current_brightness = actual;
+                active_target_b = actual;
+                last_set_brightness = actual.round() as u32;
+            }
+        }
         let start = std::time::Instant::now();
         
         if let Some(lum) = get_primary_monitor_average_luminance() {
@@ -212,6 +227,10 @@ async fn main() {
             
             // Linear interpolation (map range)
             let mut calculated_target_b = bright1 + (lum - lum1) * (bright2 - bright1) / (lum2 - lum1);
+            
+            // Apply the manual baseline offset
+            calculated_target_b += baseline_offset;
+            
             calculated_target_b = calculated_target_b.clamp(0.0, 100.0);
             
             // Hysteresis (Deadzone): Only change the active target if the screen changed significantly.
