@@ -160,11 +160,19 @@ async fn main() {
         let start = std::time::Instant::now();
         
         if let Some(lum) = get_primary_monitor_average_luminance() {
-            let min_brightness = 20.0;
-            let max_brightness = 100.0;
+            // Calibration points from user:
+            // lum = 0.12 -> brightness = 75
+            // lum = 0.86 -> brightness = 60
+            let lum1: f32 = 0.12;
+            let bright1: f32 = 75.0;
+            let lum2: f32 = 0.86;
+            let bright2: f32 = 60.0;
             
-            // Inverted relationship
-            let target_b = max_brightness - (lum * (max_brightness - min_brightness));
+            // Linear interpolation (map range)
+            let mut target_b = bright1 + (lum - lum1) * (bright2 - bright1) / (lum2 - lum1);
+            
+            // Clamp to absolute bounds to ensure valid brightness values
+            target_b = target_b.clamp(0.0, 100.0);
             
             // Apply smoothing
             current_brightness = (current_brightness * smoothing_factor) + (target_b * (1.0 - smoothing_factor));
