@@ -8,4 +8,7 @@ xcap = "0.3"
 windows = { version = "0.58", features = ["Win32_Devices_Display", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 brightness_sys = { package = "brightness", version = "0.5" }
 futures = "0.3"
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.0", features = ["full", "rt-multi-thread"] }
+tray-icon = "0.19"
+tao = "0.30"
+winreg = "0.53"
