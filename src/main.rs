@@ -1,5 +1,15 @@
+#![windows_subsystem = "windows"]
+
 use std::thread;
 use std::time::Duration;
+use std::sync::{Arc, Mutex};
+
+struct AppState {
+    paused: bool,
+    reset_calibration: bool,
+    luminance: f32,
+    brightness: u32,
+}
 
 use windows::Win32::Devices::Display::{
     DestroyPhysicalMonitors, GetNumberOfPhysicalMonitorsFromHMONITOR,
@@ -182,11 +192,7 @@ async fn get_initial_brightness() -> f32 {
     50.0
 }
 
-#[tokio::main]
-async fn main() {
-    println!("Starting Eyesaver...");
-    println!("Press Ctrl+C to exit.");
-    
+async fn brightness_loop(state: Arc<Mutex<AppState>>) {
     // Smoothing factor: lower = faster transitions (0.65 means it fades quickly over ~150ms)
     // Dragging this out too long makes the discrete hardware steps (1-100) visible to the eye.
     let smoothing_factor = 0.65;
@@ -196,72 +202,160 @@ async fn main() {
     let mut last_set_brightness: u32 = current_brightness.round() as u32;
     let mut active_target_b: f32 = current_brightness;
     
-    println!("Initial brightness detected as: {}%", last_set_brightness);
-    
     let mut baseline_offset: f32 = 0.0;
     let mut tick_counter: u32 = 0;
     
     loop {
+        if let Ok(mut s) = state.lock() {
+            if s.paused {
+                drop(s);
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                continue;
+            }
+            if s.reset_calibration {
+                baseline_offset = 0.0;
+                s.reset_calibration = false;
+            }
+        }
+        
         tick_counter += 1;
         // Check for manual overrides every 500ms (10 ticks)
         if tick_counter % 10 == 0 {
             let actual = get_initial_brightness().await;
             if (actual as i32 - last_set_brightness as i32).abs() > 2 {
-                println!("Manual brightness override detected ({} -> {})! Recalibrating baseline...", last_set_brightness, actual);
                 baseline_offset += actual - current_brightness;
                 current_brightness = actual;
                 active_target_b = actual;
                 last_set_brightness = actual.round() as u32;
             }
         }
-        let start = std::time::Instant::now();
         
         if let Some(lum) = get_primary_monitor_average_luminance() {
-            // Calibration points from user:
-            // lum = 0.12 -> brightness = 75
-            // lum = 0.86 -> brightness = 60
             let lum1: f32 = 0.12;
             let bright1: f32 = 75.0;
             let lum2: f32 = 0.86;
             let bright2: f32 = 60.0;
             
-            // Linear interpolation (map range)
             let mut calculated_target_b = bright1 + (lum - lum1) * (bright2 - bright1) / (lum2 - lum1);
-            
-            // Apply the manual baseline offset
             calculated_target_b += baseline_offset;
-            
             calculated_target_b = calculated_target_b.clamp(0.0, 100.0);
             
-            // Hysteresis (Deadzone): Only change the active target if the screen changed significantly.
-            // This prevents tiny fluctuations (like a blinking cursor or small video) from causing flickering.
             if (calculated_target_b - active_target_b).abs() > 2.0 {
                 active_target_b = calculated_target_b;
             }
             
-            // Apply smoothing
             current_brightness = (current_brightness * smoothing_factor) + (active_target_b * (1.0 - smoothing_factor));
             let final_b = current_brightness.round() as u32;
             
+            if let Ok(mut s) = state.lock() {
+                s.luminance = lum;
+                s.brightness = final_b;
+            }
+            
             if final_b != last_set_brightness {
-                println!("Luminance: {:.2} -> Target: {}, Smoothed: {}", lum, active_target_b.round(), final_b);
-                
-                // Set brightness using both APIs to cover external monitors + laptop displays
                 set_monitor_brightness_ddcci(final_b);
                 set_monitor_brightness_wmi(final_b).await;
-                
                 last_set_brightness = final_b;
             }
             
-            // Run at ~20 FPS for much smoother and less stuttery transitions
             tokio::time::sleep(Duration::from_millis(50)).await;
         } else {
-            let mut error_printed = false;
-            if !error_printed {
-                println!("Failed to get monitor luminance, retrying... (Ensure you are not running this in a headless terminal)");
-                error_printed = true;
-            }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
+}
+
+fn register_startup() {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    use std::env;
+
+    if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        KEY_WRITE,
+    ) {
+        if let Ok(exe_path) = env::current_exe() {
+            let _ = hkcu.set_value("Eyesaver", &exe_path.to_string_lossy().as_ref());
+        }
+    }
+}
+
+fn main() {
+    register_startup();
+    
+    let state = Arc::new(Mutex::new(AppState {
+        paused: false,
+        reset_calibration: false,
+        luminance: 0.0,
+        brightness: 50,
+    }));
+    
+    let state_clone = state.clone();
+
+    // Spawn the brightness loop in a background thread using Tokio
+    thread::spawn(move || {
+        if let Ok(rt) = tokio::runtime::Runtime::new() {
+            rt.block_on(async {
+                brightness_loop(state_clone).await;
+            });
+        }
+    });
+
+    use tao::event_loop::{ControlFlow, EventLoopBuilder};
+    use tray_icon::{TrayIconBuilder, Icon, menu::{Menu, MenuItem, MenuEvent, PredefinedMenuItem}};
+
+    let event_loop = EventLoopBuilder::new().build();
+
+    let tray_menu = Menu::new();
+    let status_i = MenuItem::new("Status: Loading...", false, None);
+    let pause_i = MenuItem::new("Pause", true, None);
+    let reset_i = MenuItem::new("Reset Calibration", true, None);
+    let quit_i = MenuItem::new("Quit", true, None);
+    
+    let _ = tray_menu.append(&status_i);
+    let _ = tray_menu.append(&PredefinedMenuItem::separator());
+    let _ = tray_menu.append(&pause_i);
+    let _ = tray_menu.append(&reset_i);
+    let _ = tray_menu.append(&PredefinedMenuItem::separator());
+    let _ = tray_menu.append(&quit_i);
+
+    // Create a 32x32 blank/white icon dynamically
+    let icon_rgba = vec![255; 32 * 32 * 4]; 
+    let icon = Icon::from_rgba(icon_rgba, 32, 32).unwrap();
+
+    let mut tray_icon = Some(
+        TrayIconBuilder::new()
+            .with_menu(Box::new(tray_menu))
+            .with_tooltip("Eyesaver")
+            .with_icon(icon)
+            .build()
+            .unwrap(),
+    );
+
+    let menu_channel = MenuEvent::receiver();
+
+    event_loop.run(move |_event, _, control_flow| {
+        *control_flow = ControlFlow::WaitUntil(std::time::Instant::now() + std::time::Duration::from_millis(500));
+        
+        if let Ok(s) = state.lock() {
+            let status_text = format!("Luminance: {:.2} | Brightness: {}%", s.luminance, s.brightness);
+            status_i.set_text(status_text);
+        }
+
+        if let Ok(event) = menu_channel.try_recv() {
+            if event.id == quit_i.id() {
+                tray_icon.take();
+                *control_flow = ControlFlow::Exit;
+            } else if event.id == pause_i.id() {
+                if let Ok(mut s) = state.lock() {
+                    s.paused = !s.paused;
+                    pause_i.set_text(if s.paused { "Resume" } else { "Pause" });
+                }
+            } else if event.id == reset_i.id() {
+                if let Ok(mut s) = state.lock() {
+                    s.reset_calibration = true;
+                }
+            }
+        }
+    });
 }
