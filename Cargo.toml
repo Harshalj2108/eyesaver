@@ -1,14 +1,30 @@
 [package]
 name = "brightness"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
-xcap = "0.3"
-windows = { version = "0.58", features = ["Win32_Devices_Display", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
-brightness_sys = { package = "brightness", version = "0.5" }
-futures = "0.3"
-tokio = { version = "1.0", features = ["full", "rt-multi-thread"] }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Devices_Display",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_System_Threading",
+    "Win32_System_SystemInformation",
+    "Win32_Security",
+    "Devices_Sensors",
+    "Foundation",
+] }
+brightness_sys = { package = "brightness", version = "0.5", default-features = false }
 tray-icon = "0.19"
 tao = "0.30"
 winreg = "0.53"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+global-hotkey = "0.6"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
