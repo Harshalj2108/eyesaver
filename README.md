@@ -15,7 +15,7 @@ Eyesaver is an ultra-lightweight, high-performance Windows utility written in Ru
   * Pauses when color-critical or media applications are in focus (e.g. Photoshop, Lightroom, DaVinci Resolve, VLC).
 * **Ambient Light Sensor Integration:** Automatically detects laptop ambient light sensors (`Windows.Devices.Sensors.LightSensor`) and applies smooth logarithmic lux adjustments.
 * **Night Mode Cap:** Automatically enforces maximum brightness limits during scheduled evening/night hours without requiring external third-party tools.
-* **Intelligent Baseline Learning:** Nudges made via hotkeys or the native Windows brightness slider adjust the persistent offset, learning your preference across content changes.
+* **Intelligent Baseline Learning:** Nudges made via hotkeys or the native Windows brightness slider adjust the persistent offset, learning your preference across content changes. Changes made while paused are not learned. Turn off Windows' own "Change brightness automatically when lighting changes", or its changes get learned as yours.
 * **Per-Monitor V2 DPI Aware:** Tao event loop initialization ensures accurate unscaled coordinates across mixed-DPI multi-monitor setups.
 * **Single Instance Enforcement:** Named Windows Kernel Mutex prevents duplicate background instances from racing.
 * **Global Hotkeys:**
@@ -40,7 +40,7 @@ The tray icon dynamically renders a 32x32 sun icon (amber when active, grey when
 
 ## Configuration (`config.toml`)
 
-Stored at `%LOCALAPPDATA%\Eyesaver\config.toml`:
+Stored at `%LOCALAPPDATA%\Eyesaver\config.toml`. The app rewrites this file when it saves (comments are not kept). A file that fails to parse is renamed to `config.toml.bad` and defaults are used. `external_min_write_interval_ms` is at least 500, and external monitors only get the final value of each fade, not every step.
 
 ```toml
 preset = "normal"

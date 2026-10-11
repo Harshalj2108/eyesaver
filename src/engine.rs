@@ -45,13 +45,11 @@ impl Shared {
 
     /// Shift the learned offset (tray Brighter/Dimmer, hotkeys) and persist it.
     pub fn nudge(&mut self, delta: f32) {
-        self.config.offset = (self.config.offset + delta).clamp(-100.0, 100.0);
-        config::save(&self.config);
+        self.config = config::update(|c| c.offset = (c.offset + delta).clamp(-100.0, 100.0));
     }
 
     pub fn reset_calibration(&mut self) {
-        self.config.offset = 0.0;
-        config::save(&self.config);
+        self.config = config::update(|c| c.offset = 0.0);
         log!("Calibration reset");
     }
 }
@@ -73,11 +71,10 @@ const SMOOTHING_BRIGHTEN: f32 = 0.75;
 /// Ignore target changes smaller than this (percentage points) to avoid flicker.
 const HYSTERESIS: f32 = 2.0;
 
-fn night_active(night: &Night) -> bool {
+fn night_active(night: &Night, hour: u8) -> bool {
     if !night.enabled || night.start_hour == night.end_hour {
         return false;
     }
-    let hour = unsafe { GetLocalTime() }.wHour as u8;
     if night.start_hour < night.end_hour {
         hour >= night.start_hour && hour < night.end_hour
     } else {
@@ -92,6 +89,11 @@ pub fn run(shared: Arc<Mutex<Shared>>) {
 
     let mut current = displays.initial_brightness().unwrap_or(50) as f32;
     let mut target = current;
+    // Curve + ambient shift without the offset, as of the last capture.
+    let mut base = current - lock(&shared).config.offset;
+    let mut lum: Option<f32> = None;
+    let mut last_capture: Option<Instant> = None;
+    let mut was_paused = false;
     let mut ambient: Option<AmbientLight> = None;
     let mut auto_pause: Option<String> = None;
     let mut last_auto_check: Option<Instant> = None;
@@ -105,15 +107,16 @@ pub fn run(shared: Arc<Mutex<Shared>>) {
 
         let (paused, cfg) = {
             let mut s = lock(&shared);
-            if let Pause::Until(until) = s.pause {
-                if now >= until {
-                    s.pause = Pause::Running;
-                    log!("Timed pause ended");
-                }
+            if let Pause::Until(until) = s.pause
+                && now >= until
+            {
+                s.pause = Pause::Running;
+                log!("Timed pause ended");
             }
             (s.is_paused(), s.config.clone())
         };
         if paused {
+            was_paused = true;
             thread::sleep(Duration::from_millis(500));
             continue;
         }
@@ -129,8 +132,17 @@ pub fn run(shared: Arc<Mutex<Shared>>) {
             }
         }
         if auto_pause.is_some() {
+            was_paused = true;
             thread::sleep(Duration::from_millis(500));
             continue;
+        }
+        // Changes made while paused (e.g. during a full-screen video) are not a preference:
+        // adopt them without learning.
+        if std::mem::take(&mut was_paused)
+            && let Some(actual) = displays.detect_manual_change()
+        {
+            current = actual as f32;
+            target = current;
         }
 
         // A long gap between ticks means the PC was asleep: cached monitor handles may be
@@ -157,18 +169,23 @@ pub fn run(shared: Arc<Mutex<Shared>>) {
         if last_override_check.elapsed() >= check_every {
             last_override_check = Instant::now();
             if let Some(actual) = displays.detect_manual_change() {
-                offset += actual as f32 - current;
                 current = actual as f32;
                 target = current;
-                let mut s = lock(&shared);
-                s.config.offset = offset;
-                config::save(&s.config);
+                // Set, don't add: `current` may be capped (night, max), and adding the
+                // difference to a capped value made the offset grow with every try.
+                offset = (current - base).clamp(-100.0, 100.0);
+                lock(&shared).config = config::update(|c| c.offset = offset);
                 log!("Manual change to {actual}% detected; offset now {offset:+.1}");
             }
         }
 
         let mut interval = IDLE_TICK;
-        if let Some(lum) = capture::primary_luminance() {
+        // Fade steps reuse the last sample; the target only needs re-checking at the idle rate.
+        if last_capture.is_none_or(|t| t.elapsed() >= IDLE_TICK) {
+            last_capture = Some(now);
+            lum = capture::primary_luminance();
+        }
+        if let Some(lum) = lum {
             let shift = if cfg.ambient.enabled {
                 ambient
                     .get_or_insert_with(AmbientLight::new)
@@ -176,14 +193,15 @@ pub fn run(shared: Arc<Mutex<Shared>>) {
             } else {
                 0.0
             };
-            let night = night_active(&cfg.night);
+            let night = night_active(&cfg.night, unsafe { GetLocalTime() }.wHour as u8);
             let mut max = cfg.max_brightness.clamp(0.0, 100.0);
             if night {
                 max = max.min(cfg.night.max_brightness.max(0.0));
             }
             let min = cfg.min_brightness.clamp(0.0, max);
 
-            let desired = (cfg.curve.eval(lum) + offset + shift).clamp(min, max);
+            base = cfg.curve.eval(lum) + shift;
+            let desired = (base + offset).clamp(min, max);
             if (desired - target).abs() > HYSTERESIS {
                 target = desired;
             }
@@ -195,7 +213,11 @@ pub fn run(shared: Arc<Mutex<Shared>>) {
                 interval = ACTIVE_TICK;
             }
             let out = current.round() as u32;
-            displays.apply(out, Duration::from_millis(cfg.external_min_write_interval_ms));
+            displays.apply(
+                out,
+                target.round() as u32,
+                Duration::from_millis(cfg.external_min_write_interval_ms),
+            );
 
             let mut s = lock(&shared);
             s.luminance = lum;
@@ -203,5 +225,19 @@ pub fn run(shared: Arc<Mutex<Shared>>) {
             s.night_cap = night;
         }
         thread::sleep(interval);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn night_window_wraps_midnight() {
+        let night = Night { enabled: true, start_hour: 21, end_hour: 7, max_brightness: 50.0 };
+        assert!(night_active(&night, 23) && night_active(&night, 0) && night_active(&night, 6));
+        assert!(!night_active(&night, 7) && !night_active(&night, 20));
+        let day = Night { start_hour: 9, end_hour: 17, ..night };
+        assert!(night_active(&day, 9) && !night_active(&day, 17) && !night_active(&day, 8));
     }
 }

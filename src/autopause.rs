@@ -24,16 +24,14 @@ pub fn reason(cfg: &Config) -> Option<String> {
             return Some(exe);
         }
     }
-    if cfg.pause_in_fullscreen {
-        if let Ok(state) = unsafe { SHQueryUserNotificationState() } {
-            if state == QUNS_BUSY
+    if cfg.pause_in_fullscreen
+        && let Ok(state) = unsafe { SHQueryUserNotificationState() }
+            && (state == QUNS_BUSY
                 || state == QUNS_RUNNING_D3D_FULL_SCREEN
-                || state == QUNS_PRESENTATION_MODE
+                || state == QUNS_PRESENTATION_MODE)
             {
                 return Some("full-screen app".into());
             }
-        }
-    }
     None
 }
 

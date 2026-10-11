@@ -108,11 +108,13 @@ impl Displays {
         }
     }
 
-    /// Write `value` (0-100) to every display. Internal panels are written immediately
-    /// (smooth fades); external monitors at most once per `external_min_interval`.
-    pub fn apply(&mut self, value: u32, external_min_interval: Duration) {
+    /// Write brightness (0-100) to every display. Internal panels get the fade step
+    /// `fading` immediately; external monitors skip the fade and get `target`, at most
+    /// once per `external_min_interval` (each write may wear the monitor's memory).
+    pub fn apply(&mut self, fading: u32, target: u32, external_min_interval: Duration) {
         let now = Instant::now();
         for d in &mut self.list {
+            let value = if d.internal { fading } else { target };
             if d.last_requested == Some(value) {
                 continue;
             }

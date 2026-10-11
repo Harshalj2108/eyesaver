@@ -29,6 +29,8 @@ fn main() {
     if !system::ensure_single_instance() {
         return;
     }
+    // No console: without this, a panic (e.g. in the engine thread) leaves no trace.
+    std::panic::set_hook(Box::new(|info| log!("Panic: {info}")));
     log!("Eyesaver {} starting", env!("CARGO_PKG_VERSION"));
     system::init_startup();
     let config = config::load();
@@ -58,6 +60,7 @@ fn main() {
 
     let menu_rx = MenuEvent::receiver();
     let mut icon_active = true;
+    let mut last_text = String::new();
 
     event_loop.run(move |_event, _, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(250));
@@ -92,11 +95,12 @@ fn main() {
             } else if id == menu.reset.id() {
                 s.reset_calibration();
             } else if let Some(preset) = menu.preset_for(&id) {
-                s.config.preset = preset;
-                if let Some(curve) = preset.curve() {
-                    s.config.curve = curve;
-                }
-                config::save(&s.config);
+                s.config = config::update(|c| {
+                    c.preset = preset;
+                    if let Some(curve) = preset.curve() {
+                        c.curve = curve;
+                    }
+                });
                 menu.show_preset(preset);
                 log!("Preset changed to {preset:?}");
             } else if id == menu.startup.id() {
@@ -104,7 +108,7 @@ fn main() {
                 // so it is correct whether or not the menu toggled itself.
                 let enable = !system::startup_enabled();
                 system::set_startup(enable);
-                menu.startup.set_checked(enable);
+                menu.startup.set_checked(system::startup_enabled());
             } else if id == menu.open_config.id() {
                 let _ = std::process::Command::new("notepad.exe")
                     .arg(config::path())
@@ -138,20 +142,27 @@ fn main() {
                 }
             }
         };
-        menu.status.set_text(&text);
-        menu.pause_toggle.set_text(if s.is_paused() {
-            "Resume  (Ctrl+Alt+P)"
-        } else {
-            "Pause  (Ctrl+Alt+P)"
-        });
+        // Every tooltip update is a call into Explorer, so only send changes.
+        // (Pause state is part of `text`, so the toggle label is covered too.)
+        if text != last_text {
+            menu.status.set_text(&text);
+            menu.pause_toggle.set_text(if s.is_paused() {
+                "Resume  (Ctrl+Alt+P)"
+            } else {
+                "Pause  (Ctrl+Alt+P)"
+            });
+            if let Some(icon) = &tray_icon {
+                let _ = icon.set_tooltip(Some(format!("Eyesaver - {text}")));
+            }
+            last_text = text;
+        }
 
         let active = !s.is_paused() && s.auto_pause.is_none();
-        if let Some(icon) = &tray_icon {
-            let _ = icon.set_tooltip(Some(format!("Eyesaver - {text}")));
-            if icon_active != active {
-                icon_active = active;
-                let _ = icon.set_icon(Some(tray::sun_icon(active)));
-            }
+        if let Some(icon) = &tray_icon
+            && icon_active != active
+        {
+            icon_active = active;
+            let _ = icon.set_icon(Some(tray::sun_icon(active)));
         }
     });
 }
