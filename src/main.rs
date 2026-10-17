@@ -36,6 +36,7 @@ fn main() {
     let config = config::load();
     let hotkeys_enabled = config.hotkeys;
     let initial_preset = config.preset;
+    let initial_night_mode = config.night_mode;
 
     // Build the event loop BEFORE starting the engine: tao makes the process per-monitor
     // DPI aware here, and the screen capture needs real (unscaled) screen dimensions.
@@ -47,7 +48,7 @@ fn main() {
         std::thread::spawn(move || engine::run(shared));
     }
 
-    let menu = tray::TrayMenu::new(system::startup_enabled(), initial_preset);
+    let menu = tray::TrayMenu::new(system::startup_enabled(), initial_preset, initial_night_mode);
     let mut tray_icon = Some(
         TrayIconBuilder::new()
             .with_menu(Box::new(menu.menu.clone()))
@@ -103,6 +104,11 @@ fn main() {
                 });
                 menu.show_preset(preset);
                 log!("Preset changed to {preset:?}");
+            } else if id == menu.day.id() || id == menu.night.id() {
+                let night_mode = id == menu.night.id();
+                s.config = config::update(|c| c.night_mode = night_mode);
+                menu.show_mode(night_mode);
+                log!("{} mode", if night_mode { "Night" } else { "Day" });
             } else if id == menu.startup.id() {
                 // Derive the new state from the registry, not from the menu's checkbox,
                 // so it is correct whether or not the menu toggled itself.
@@ -116,6 +122,7 @@ fn main() {
             } else if id == menu.reload_config.id() {
                 s.config = config::load();
                 menu.show_preset(s.config.preset);
+                menu.show_mode(s.config.night_mode);
                 log!("Settings reloaded");
             }
         }

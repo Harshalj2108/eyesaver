@@ -14,6 +14,7 @@ Eyesaver is an ultra-lightweight, high-performance Windows utility written in Ru
   * Pauses during full-screen games, videos, or presentations (`SHQueryUserNotificationState`).
   * Pauses when color-critical or media applications are in focus (e.g. Photoshop, Lightroom, DaVinci Resolve, VLC).
 * **Ambient Light Sensor Integration:** Automatically detects laptop ambient light sensors (`Windows.Devices.Sensors.LightSensor`) and applies smooth logarithmic lux adjustments.
+* **Day / Night Mode:** Switch from the tray. Night mode runs 15 points dimmer than day mode and still follows on-screen content. Switching does not touch your learned calibration.
 * **Night Mode Cap:** Automatically enforces maximum brightness limits during scheduled evening/night hours without requiring external third-party tools.
 * **Intelligent Baseline Learning:** Nudges made via hotkeys or the native Windows brightness slider adjust the persistent offset, learning your preference across content changes. Changes made while paused are not learned. Turn off Windows' own "Change brightness automatically when lighting changes", or its changes get learned as yours.
 * **Per-Monitor V2 DPI Aware:** Tao event loop initialization ensures accurate unscaled coordinates across mixed-DPI multi-monitor setups.
@@ -30,6 +31,7 @@ Eyesaver is an ultra-lightweight, high-performance Windows utility written in Ru
 The tray icon dynamically renders a 32x32 sun icon (amber when active, grey when paused):
 * **Status:** Live readout of screen luminance, target brightness %, night cap status, or auto-pause reason.
 * **Brighter / Dimmer:** Quick 5% calibration shifts.
+* **Mode:** **Day** or **Night (dimmer)**.
 * **Strength Presets:** Radio-style selection between **Subtle**, **Normal**, and **Strong** curves (or Custom if hand-edited).
 * **Pause / Resume:** Toggle indefinitely or select timed pauses (**30 minutes**, **1 hour**).
 * **Reset Calibration:** Re-centers your learned offset back to 0.
@@ -51,6 +53,7 @@ external_min_write_interval_ms = 1000
 pause_in_fullscreen = true
 excluded_apps = ["Photoshop.exe", "Lightroom.exe", "Resolve.exe", "vlc.exe"]
 hotkeys = true
+night_mode = false
 
 [curve]
 dark_luminance = 0.12

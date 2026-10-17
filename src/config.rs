@@ -111,6 +111,8 @@ pub struct Config {
     pub excluded_apps: Vec<String>,
     /// Global hotkeys Ctrl+Alt+Up/Down/P. Needs an app restart to take effect.
     pub hotkeys: bool,
+    /// Night mode (tray > Mode) runs a bit dimmer than day mode.
+    pub night_mode: bool,
     pub night: Night,
     pub ambient: Ambient,
 }
@@ -132,6 +134,7 @@ impl Default for Config {
                 "vlc.exe".into(),
             ],
             hotkeys: true,
+            night_mode: false,
             night: Night::default(),
             ambient: Ambient::default(),
         }

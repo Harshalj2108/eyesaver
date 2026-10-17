@@ -70,6 +70,8 @@ const SMOOTHING_DIM: f32 = 0.55;
 const SMOOTHING_BRIGHTEN: f32 = 0.75;
 /// Ignore target changes smaller than this (percentage points) to avoid flicker.
 const HYSTERESIS: f32 = 2.0;
+/// Brightness points night mode sits below day mode.
+const NIGHT_MODE_DIM: f32 = 15.0;
 
 fn night_active(night: &Night, hour: u8) -> bool {
     if !night.enabled || night.start_hour == night.end_hour {
@@ -89,7 +91,7 @@ pub fn run(shared: Arc<Mutex<Shared>>) {
 
     let mut current = displays.initial_brightness().unwrap_or(50) as f32;
     let mut target = current;
-    // Curve + ambient shift without the offset, as of the last capture.
+    // Curve + ambient and night-mode shifts without the offset, as of the last capture.
     let mut base = current - lock(&shared).config.offset;
     let mut lum: Option<f32> = None;
     let mut last_capture: Option<Instant> = None;
@@ -186,13 +188,17 @@ pub fn run(shared: Arc<Mutex<Shared>>) {
             lum = capture::primary_luminance();
         }
         if let Some(lum) = lum {
-            let shift = if cfg.ambient.enabled {
+            let mut shift = if cfg.ambient.enabled {
                 ambient
                     .get_or_insert_with(AmbientLight::new)
                     .shift(cfg.ambient.strength)
             } else {
                 0.0
             };
+            // Part of `base`, so switching modes is never learned as a manual change.
+            if cfg.night_mode {
+                shift -= NIGHT_MODE_DIM;
+            }
             let night = night_active(&cfg.night, unsafe { GetLocalTime() }.wHour as u8);
             let mut max = cfg.max_brightness.clamp(0.0, 100.0);
             if night {

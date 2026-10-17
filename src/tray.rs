@@ -13,6 +13,8 @@ pub struct TrayMenu {
     pub subtle: CheckMenuItem,
     pub normal: CheckMenuItem,
     pub strong: CheckMenuItem,
+    pub day: CheckMenuItem,
+    pub night: CheckMenuItem,
     pub pause_toggle: MenuItem,
     pub pause_30: MenuItem,
     pub pause_60: MenuItem,
@@ -24,7 +26,7 @@ pub struct TrayMenu {
 }
 
 impl TrayMenu {
-    pub fn new(startup_enabled: bool, preset: Preset) -> Self {
+    pub fn new(startup_enabled: bool, preset: Preset, night_mode: bool) -> Self {
         let menu = Menu::new();
         let status = MenuItem::new("Starting...", false, None);
         let brighter = MenuItem::new("Brighter  (Ctrl+Alt+Up)", true, None);
@@ -37,6 +39,12 @@ impl TrayMenu {
         let _ = strength.append(&subtle);
         let _ = strength.append(&normal);
         let _ = strength.append(&strong);
+
+        let mode = Submenu::new("Mode", true);
+        let day = CheckMenuItem::new("Day", true, !night_mode, None);
+        let night = CheckMenuItem::new("Night (dimmer)", true, night_mode, None);
+        let _ = mode.append(&day);
+        let _ = mode.append(&night);
 
         let pause_toggle = MenuItem::new("Pause  (Ctrl+Alt+P)", true, None);
         let pause_for = Submenu::new("Pause for", true);
@@ -56,6 +64,7 @@ impl TrayMenu {
         let _ = menu.append(&brighter);
         let _ = menu.append(&dimmer);
         let _ = menu.append(&strength);
+        let _ = menu.append(&mode);
         let _ = menu.append(&PredefinedMenuItem::separator());
         let _ = menu.append(&pause_toggle);
         let _ = menu.append(&pause_for);
@@ -75,6 +84,8 @@ impl TrayMenu {
             subtle,
             normal,
             strong,
+            day,
+            night,
             pause_toggle,
             pause_30,
             pause_60,
@@ -103,6 +114,12 @@ impl TrayMenu {
         self.subtle.set_checked(preset == Preset::Subtle);
         self.normal.set_checked(preset == Preset::Normal);
         self.strong.set_checked(preset == Preset::Strong);
+    }
+
+    /// Radio-button behaviour for Day / Night.
+    pub fn show_mode(&self, night_mode: bool) {
+        self.day.set_checked(!night_mode);
+        self.night.set_checked(night_mode);
     }
 }
 
